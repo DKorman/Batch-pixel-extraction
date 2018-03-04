@@ -1,0 +1,114 @@
+#This code can easily be modified to baczh extract pixel values at other desired locations on any georeferenced raster images 
+
+```{r}
+library(raster)
+library(rgdal)
+library(rgeos)
+
+opts_knit$set(root.dir="E:/.../")
+input_shapefile=shapefile("E:/.../input_shapefile.shp")
+
+
+#create a list of full paths of all folders named R20 which contain satellite imagery. Purpose of this was to avoid the unnecessary listing of all other folders which do not contain satellite images
+dirs=list.dirs(full.names=TRUE)
+dirs=dirs[grepl("R20",dirs)]
+dirs=as.list(dirs)
+
+#create an empty list which will store the outputs of the for loops. 
+DataToWrite=list()
+
+#create a dataframe which will be used to store the lists
+final_table=data.frame()
+
+#nested for loop. First for loop iterates trough the R20 folders which each contain 13 satellite images, and the other which iterates trough these 13 images.
+#curRaster inputs the current image into the R environment for further processing
+#extract function extracts the pixels from the current image based on the shapefile
+#not all images were inside of the desired location, therefore IF statemenet was created for these situations. Other way to solve this issue would be do remove from the main folder all satellite imagery that is not in the area of interest
+
+for (j in 1:length(dirs)) {
+  setwd(paste("E:/.../",as.character(dirs[j]),sep="/"))
+  files=list.files(full.names=FALSE,pattern="*20m*.tif$")
+  for (i in 1:length(files)) {
+    
+      if ((length(files) >1)) {
+   
+        curRaster=raster(paste(getwd(),files[i],sep="/"))
+        rasterOut=(na.omit(extract(curRaster,input_shapefile, cellnumbers=TRUE, weights=TRUE, df=TRUE)))
+      } else {
+        
+          dummy_list=list(rep(NA,20))
+          empty_table=as.data.frame(t(unlist(dummy_list)))      
+          colnames(empty_table)=c(1:20)
+          
+      }
+  
+  
+  
+      if((length(rasterOut) > 1)) {
+
+          DataToWrite=c(DataToWrite,rasterOut[3])
+  
+
+        } else {
+              dummy_list=list(rep(NA,20))
+              empty_table=as.data.frame(t(unlist(dummy_list)))      
+              colnames(empty_table)=c(1:20)
+        }
+  }
+      
+  
+  
+  if((length(rasterOut) > 1)) {
+   
+    extracted_pixel_values=as.data.frame(DataToWrite)
+    
+    #each pixel extracted must have its TILE ID and sensing date attached. This information is contained within the name of each       image and will also be stored in the final table
+    image_TILE_ID=as.vector(rep((substr((names(DataToWrite)[1]),50,55)),nrow(extracted_pixel_values)))
+    Image_sensing_date=as.vector(rep((substr((names(DataToWrite)[1]),26,33)),nrow(extracted_pixel_values)))
+    
+    #line below fetches the coordinates of the centre of each pixel extracted, which will be required to interact with the             shapefile in order to grab spatial information from it 
+    coordinates=as.data.frame(xyFromCell(curRaster,rasterOut$cell))
+    
+    #coordinates first need to be stored as SpatialPoints object type
+    coordinates_as_Spatial_points=SpatialPoints(coordinates)
+    
+    #this ensures that the points are saved in the same projection as the shapefile (wgs84 33N)
+    proj4string(coordinates_as_Spatial_points)=CRS("+proj=utm +zone=33 +Image_sensing_date=WGS84 +units=m +no_defs +ellps=WGS84 +towgs84=0,0,0 ")
+    
+    #line below creates a 15 meter wide buffer around the coordinates, which will be required to interact with the                     shapefile in order to grab spatial information from it 
+    buffer=gBuffer(coordinates_as_Spatial_points, width = 15,byid=TRUE)
+    
+    #function "over"the retrieves the attribute values from one geometry (our input location) at the spatial locations of another      (extracted pixel coordinates)  
+    shapefile_location=as.data.frame(over(buffer,input_shapefile))
+    polygon_location_ID=as.vector(shapefile_location$polygon_ID)
+    
+    #line below binds all the extracted values of the for loop in dataframe  
+    for_loop_table=as.data.frame(cbind(rasterOut[2],image_TILE_ID[1],Image_sensing_date[1],rasterOut[4],coordinates, polygon_location_ID, extracted_pixel_values))
+    colnames(for_loop_table)=c(1:20)
+    
+    #all results of the extraction are stored in the final table, while for_loop_table is rewritten again for each iteration
+    final_table=rbind(final_table,for_loop_table)
+
+    DataToWrite=list()
+
+      } else {
+        final_table=rbind(final_table,empty_table)
+        
+      }
+}
+#sets names for the final table. Last 13 names are names of the columns regarding 13 images which all have specific key names such as AOT, B02, etc
+colnames(final_table)=c("cellnumber","image_TILE_ID","Image_sensing_date","perc_in_buffer","x","y","polygon_location_ID", "AOT","B02","B03","B04","B05","B06","B07","B8A","B11","B12","SCL", "VIS","WVp")
+
+#writes the results in the csv. Example of the results can be viewed in the separate file in the repository
+write.csv(final_table,"E:/.../extracted_pixels_table.csv")
+
+
+
+
+
+
+```
+
+
+
+
